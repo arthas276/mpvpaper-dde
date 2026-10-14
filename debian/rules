@@ -1,0 +1,25 @@
+#!/usr/bin/make -f
+
+D := debian/mpvpaper-dde
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	cd engine && ./build.sh
+
+override_dh_auto_install:
+	install -D -m 0755 engine/mpvpaper $(D)/usr/bin/mpvpaper
+	install -D -m 0755 bin/mpvpaper-wallpaper $(D)/usr/bin/mpvpaper-wallpaper
+	install -D -m 0755 bin/mpvpaper-wallpaper-watch $(D)/usr/bin/mpvpaper-wallpaper-watch
+	install -D -m 0755 bin/mpvpaper-wallpaper-ui $(D)/usr/bin/mpvpaper-wallpaper-ui
+	sed -i 's|BIN="$$HOME/.local/bin/mpvpaper"|BIN="/usr/bin/mpvpaper"|' $(D)/usr/bin/mpvpaper-wallpaper
+	sed -i 's|{HOME}/.local/bin/mpvpaper|/usr/bin/mpvpaper|' $(D)/usr/bin/mpvpaper-wallpaper-ui
+	install -D -m 0644 systemd/mpvpaper-wallpaper.service $(D)/usr/lib/systemd/user/mpvpaper-wallpaper.service
+	install -D -m 0644 systemd/mpvpaper-wallpaper-watch.service $(D)/usr/lib/systemd/user/mpvpaper-wallpaper-watch.service
+	sed -i 's|%h/\.local/bin/|/usr/bin/|' $(D)/usr/lib/systemd/user/mpvpaper-wallpaper.service $(D)/usr/lib/systemd/user/mpvpaper-wallpaper-watch.service
+	install -D -m 0644 conf/mpvpaper-wallpaper.conf.example $(D)/usr/share/mpvpaper-dde/mpvpaper-wallpaper.conf
+	mkdir -p $(D)/usr/share/applications
+	sed -e 's|@PYTHON@|/usr/bin/python3|g' -e 's|@BINDIR@|/usr/bin|g' data/mpvpaper-wallpaper-ui.desktop.in > $(D)/usr/share/applications/mpvpaper-wallpaper-ui.desktop
+	install -D -m 0644 README.md $(D)/usr/share/doc/mpvpaper-dde/README.md
+	install -D -m 0644 TROUBLESHOOTING.md $(D)/usr/share/doc/mpvpaper-dde/TROUBLESHOOTING.md

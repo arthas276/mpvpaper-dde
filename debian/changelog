@@ -1,0 +1,10 @@
+mpvpaper-dde (0.1.0-1) unstable; urgency=medium
+
+  * Initial packaging: mpvpaper engine (upstream fc5ed28, unmodified,
+    rebuilt via engine/build.sh) + DDE integration shells (launcher,
+    official-wallpaper watch hook, PyQt5 panel), systemd user units,
+    packaged default config, desktop entry, README/TROUBLESHOOTING.
+  * Machine-specific bits parameterized: output autodetection, XDG dirs,
+    configurable static placeholder.
+
+ -- arthas <arthas@localhost>  Wed, 14 Oct 2026 11:39:06 +0800

@@ -9,7 +9,13 @@ OUTPUT="auto"
 MPV_OPTS="no-audio --loop-playlist"
 
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/mpvpaper-wallpaper.conf"
-[ -r "$CONF" ] && . "$CONF"
+SYS_CONF=/usr/share/mpvpaper-dde/mpvpaper-wallpaper.conf   # deb 包提供
+load_conf() {
+  if [ -r "$CONF" ]; then . "$CONF"
+  elif [ -r "$SYS_CONF" ]; then . "$SYS_CONF"   # 无用户配置时用包缺省
+  fi
+}
+load_conf
 
 log() { echo "[mpvpaper-wallpaper] $*"; }
 
@@ -95,7 +101,7 @@ log "启动: $OUTPUT ← $VIDEO"
 
 # ---------- 主循环：崩溃自动重启 ----------
 while :; do
-  . "$CONF" 2>/dev/null   # 重读 conf（watch 钩子热切后崩溃重启不回旧视频）
+  load_conf 2>/dev/null   # 重读 conf（watch 钩子热切后崩溃重启不回旧视频）
   "$BIN" -p -a full -o "$MPV_OPTS input-ipc-server=$MPV_SOCK" "$OUTPUT" "$VIDEO"
   rc=$?
   [ "$rc" -eq 0 ] && break   # 干净退出（收到 SIGTERM 等）则结束

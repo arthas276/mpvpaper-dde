@@ -63,6 +63,25 @@ systemctl --user enable --now mpvpaper-wallpaper.service mpvpaper-wallpaper-watc
 装好后把视频路径写进 `~/.config/mpvpaper-wallpaper.conf` 的 `VIDEO=`，或直接用
 应用菜单里的「视频壁纸控制」面板。
 
+## deb 打包
+
+仓库自带 `debian/` 打包规则（debhelper 13）：
+
+```bash
+cd mpvpaper-dde
+dpkg-buildpackage -us -uc -b     # 产出 ../mpvpaper-dde_<ver>_amd64.deb
+sudo apt install ../mpvpaper-dde_*.deb   # 或 dpkg -i
+```
+
+- 构建时会现编译引擎（需要 gcc、wayland-scanner 即 libwayland-bin、wayland-protocols）。
+- deb 装的是系统级路径（/usr/bin、/usr/lib/systemd/user）；**user 单元不自动启动**，
+  需自己激活：`systemctl --user daemon-reload && systemctl --user enable --now
+  mpvpaper-wallpaper.service mpvpaper-wallpaper-watch.service`。
+- 无 `~/.config` 用户配置时，启动器回退到包内缺省
+  `/usr/share/mpvpaper-dde/mpvpaper-wallpaper.conf`（默认指向系统篝火动态壁纸）。
+- 与用户级 `install.sh` 部署同名单元，systemd user 单元以 `~/.config` 优先——
+  两种装法别同时启用，换边先停另一边。
+
 ## 使用
 
 - **控制面板**：应用菜单搜「视频壁纸控制」——换视频、把新视频加进库、暂停/恢复、

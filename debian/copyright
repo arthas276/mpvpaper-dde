@@ -1,0 +1,22 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: mpvpaper-dde
+
+Files: engine/*
+Copyright: 2019-2023 GhostNaN
+License: GPL-3+
+ Vendored from https://github.com/GhostNaN/mpvpaper at commit fc5ed28,
+ unmodified; rebuilt locally via engine/build.sh.
+
+Files: bin/* systemd/* conf/* data/* debian/* README.md TROUBLESHOOTING.md install.sh uninstall.sh
+Copyright: 2026 arthas
+License: GPL-3+
+ DDE integration layer for deepin V25 / UOS 25 (Treeland).
+
+License: GPL-3+
+ This program is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+ .
+ On Debian systems, the complete text of the GNU General Public
+ License version 3 can be found in "/usr/share/common-licenses/GPL-3".
