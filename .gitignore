@@ -2,3 +2,11 @@ engine/gen/
 engine/mpvpaper
 engine/*.o
 __pycache__/
+# debhelper 构建产物
+debian/.debhelper/
+debian/files
+debian/mpvpaper-dde/
+debian/tmp/
+debian/*.debhelper
+debian/*.substvars
+debian/debhelper-build-stamp
