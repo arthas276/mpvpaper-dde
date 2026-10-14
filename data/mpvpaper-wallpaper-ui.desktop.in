@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=视频壁纸控制
+Name[zh_CN]=视频壁纸控制
+Comment=mpvpaper 视频壁纸：换视频、添加视频、暂停、修复叠放
+Comment[zh_CN]=mpvpaper 视频壁纸：换视频、添加视频、暂停、修复叠放
+Exec=@PYTHON@ @BINDIR@/mpvpaper-wallpaper-ui
+Icon=preferences-desktop-wallpaper
+Terminal=false
+Categories=Utility;Graphics;
+StartupNotify=true

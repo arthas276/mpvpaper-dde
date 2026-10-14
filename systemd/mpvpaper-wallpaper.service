@@ -1,0 +1,15 @@
+[Unit]
+Description=mpvpaper 视频壁纸 (layer-shell background)
+# 必须在 dde-shell 桌面画布之前映射 surface：
+# treeland 同层(layer-shell background)叠放按映射先后，晚映射者在上。
+Before=dde-shell-plugin@org.deepin.ds.desktop.service
+After=dde-session-pre.target
+PartOf=dde-session-core.target
+
+[Service]
+ExecStart=%h/.local/bin/mpvpaper-wallpaper
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=dde-session-core.target

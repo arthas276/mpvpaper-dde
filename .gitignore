@@ -1,0 +1,4 @@
+engine/gen/
+engine/mpvpaper
+engine/*.o
+__pycache__/

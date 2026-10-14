@@ -1,0 +1,414 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""mpvpaper 视频壁纸控制面板 (Deepin V25 / Treeland)
+
+依赖：python3-pyqt5（系统自带）。操作走 systemctl --user 与 mpv IPC。
+叠放原理：treeland 对 background 层按 surface 映射先后叠放，晚者在上——
+· 应用并重启：停两单元 → 先起壁纸并等 mpv IPC 出现（已映射）→ 再起画布；
+· 修复叠放：只重启画布（壁纸原地不动，画布重映射必叠其上）。
+每次操作前 reset-failed，防 start-limit-hit 拒启动。
+"""
+import json
+import filecmp
+import os
+import shutil
+import subprocess
+import sys
+import threading
+import time
+from glob import glob
+
+from PyQt5.QtCore import Qt, QObject, QTimer, pyqtSignal
+from PyQt5.QtWidgets import (
+    QApplication, QCheckBox, QFileDialog, QGridLayout, QHBoxLayout, QLabel,
+    QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
+    QPushButton, QVBoxLayout, QWidget,
+)
+
+HOME = os.path.expanduser("~")
+BIN = os.environ.get("MPVPAPER_WALLPAPER_BIN", f"{HOME}/.local/bin/mpvpaper")
+CONF = os.path.join(
+    os.environ.get("XDG_CONFIG_HOME", f"{HOME}/.config"),
+    "mpvpaper-wallpaper.conf")
+VIDEO_DIR = os.environ.get(
+    "MPVPAPER_WALLPAPER_VIDEO_DIR", f"{HOME}/.local/share/wallpaper-videos")
+RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+SOCK = f"{RUNTIME_DIR}/mpvpaper-wallpaper.sock"
+SVC = "mpvpaper-wallpaper.service"
+CANVAS = "dde-shell-plugin@org.deepin.ds.desktop.service"
+EXTS = (".mp4", ".webm", ".mkv", ".mov", ".avi", ".gif")
+
+
+def run(cmd, timeout=10):
+    """返回 (rc, stdout)。system bus 的 dde-dconfig 等失败不打断 UI。"""
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, (p.stdout or "").strip()
+    except Exception as e:  # noqa: BLE001 - UI 兜底
+        return 1, str(e)
+
+
+def read_conf():
+    """source bash conf 拿 VIDEO 的真实路径。"""
+    rc, out = run(["bash", "-c", f"source '{CONF}' 2>/dev/null; echo \"$VIDEO\""])
+    return out if rc == 0 and out else ""
+
+
+def write_conf(video):
+    """只重写 VIDEO= 行，其余保留。"""
+    try:
+        with open(CONF, encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError:
+        lines = []
+    replaced = False
+    for i, ln in enumerate(lines):
+        if ln.strip().startswith("VIDEO="):
+            lines[i] = f'VIDEO="{video}"\n'
+            replaced = True
+            break
+    if not replaced:
+        lines.insert(0, f'VIDEO="{video}"\n')
+    with open(CONF, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+
+
+def sync_official(video):
+    """把选中视频同步到官方外观服务（Appearance1），由 watch 钩子统一接管。
+
+    官方服务不可用时降级为直接重启壁纸栈。"""
+    rc, _ = run([
+        "busctl", "--user", "call",
+        "org.deepin.dde.Appearance1", "/org/deepin/dde/Appearance1",
+        "org.deepin.dde.Appearance1", "Set", "ss", "wallpaper",
+        "file://" + video])
+    if rc != 0:
+        restart_wallpaper_stack()
+
+
+def copy_into_lib(src):
+    """把一个视频文件复制进视频库；同名自动 -2/-3 改名，已在库则跳过。
+    返回 (目标文件名或 None, 错误信息或 None)；(None, None) = 跳过。"""
+    if not os.path.isfile(src):
+        return None, f"不是本地文件：{src}"
+    base = os.path.basename(src)
+    dst = os.path.join(VIDEO_DIR, base)
+    if os.path.exists(dst):
+        try:
+            if os.path.samefile(src, dst) or filecmp.cmp(src, dst, shallow=False):
+                return None, None
+        except OSError:
+            pass
+        stem, ext = os.path.splitext(base)
+        n = 2
+        while os.path.exists(dst):
+            dst = os.path.join(VIDEO_DIR, f"{stem}-{n}{ext}")
+            n += 1
+    try:
+        os.makedirs(VIDEO_DIR, exist_ok=True)
+        shutil.copy2(src, dst)
+    except OSError as e:
+        return None, f"复制 {base} 失败：{e}"
+    return os.path.basename(dst), None
+
+
+def svc_active():
+    rc, out = run(["systemctl", "--user", "is-active", SVC])
+    return out == "active"
+
+
+def svc_enabled():
+    rc, out = run(["systemctl", "--user", "is-enabled", SVC])
+    return out == "enabled"
+
+
+def mpv_pause():
+    """True=暂停 False=播放 None=无 IPC。"""
+    if not os.path.exists(SOCK):
+        return None
+    rc, out = run(
+        ["bash", "-c",
+         f"echo '{{\"command\":[\"get_property\",\"pause\"]}}' | timeout 2 socat - {SOCK}"],
+        timeout=5)
+    try:
+        return json.loads(out[out.index("{"):])["data"] is True
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def mpv_set(cmdline):
+    run(["bash", "-c", f"printf '%s\\n' '{cmdline}' | timeout 2 socat - {SOCK}"])
+
+
+def reset_failed():
+    """清 start-limit（连点/崩溃循环后 systemd 会拒启动，必先解）。"""
+    run(["systemctl", "--user", "reset-failed", SVC, CANVAS])
+
+
+def mpv_mapped(timeout=15):
+    """mpv IPC socket 出现 ≈ surface 已提交映射。"""
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < timeout:
+        if os.path.exists(SOCK):
+            time.sleep(0.4)  # 提交余量
+            return True
+        time.sleep(0.15)
+    return False
+
+
+def restart_canvas():
+    """修复叠放：只重启画布。壁纸保持原映射不动，画布重映射必叠其上。"""
+    reset_failed()
+    run(["systemctl", "--user", "restart", CANVAS], timeout=30)
+    if run(["systemctl", "--user", "is-active", CANVAS])[1] != "active":
+        return ("画布重启失败，看日志：\njournalctl --user -u "
+                "dde-shell-plugin@org.deepin.ds.desktop -n 30")
+    return None
+
+
+def restart_wallpaper_stack():
+    """换视频后的完整重启：停全部 → 先起壁纸等它映射 → 再起画布（必在其上）。"""
+    reset_failed()
+    run(["systemctl", "--user", "stop", SVC, CANVAS], timeout=25)
+    run(["systemctl", "--user", "start", SVC], timeout=15)
+    if not mpv_mapped(15):
+        return "壁纸进程启动超时，看日志：\njournalctl --user -u mpvpaper-wallpaper -n 30"
+    run(["systemctl", "--user", "start", CANVAS], timeout=30)
+    if run(["systemctl", "--user", "is-active", CANVAS])[1] != "active":
+        return ("画布启动失败（叠放未保证），看日志：\njournalctl --user -u "
+                "dde-shell-plugin@org.deepin.ds.desktop -n 30")
+    return None
+
+
+class Worker(QObject):
+    """后台跑慢命令（画布重启要 1~2s），pyqtSignal 自动队列回主线程。"""
+
+    done = pyqtSignal(object)
+
+    def __init__(self, fn):
+        super().__init__()
+        self.fn = fn
+
+    def start(self, slot):
+        self.done.connect(slot)
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        self.done.emit(self.fn())
+
+
+class Win(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("视频壁纸控制")
+        self.setMinimumWidth(520)
+        self._building = False
+
+        root = QWidget()
+        self.setCentralWidget(root)
+        col = QVBoxLayout(root)
+
+        # ---- 状态区 ----
+        self.lbl_svc = QLabel()
+        self.lbl_pause = QLabel()
+        self.lbl_cur = QLabel()
+        grid = QGridLayout()
+        grid.addWidget(QLabel("服务："), 0, 0)
+        grid.addWidget(self.lbl_svc, 0, 1)
+        grid.addWidget(QLabel("播放："), 0, 2)
+        grid.addWidget(self.lbl_pause, 0, 3)
+        grid.addWidget(QLabel("当前视频："), 1, 0)
+        grid.addWidget(self.lbl_cur, 1, 1, 1, 3)
+        col.addLayout(grid)
+
+        # ---- 视频列表 ----
+        col.addWidget(QLabel(f"视频库（{VIDEO_DIR}）："))
+        self.lst = QListWidget()
+        self.lst.doubleClicked.connect(self.apply_selected)
+        col.addWidget(self.lst, 1)
+        row = QHBoxLayout()
+        self.ed_custom = QLineEdit()
+        self.ed_custom.setPlaceholderText("自定义路径或 URL，回车应用")
+        self.ed_custom.returnPressed.connect(self.apply_custom)
+        self.btn_add = QPushButton("添加视频…")
+        self.btn_add.clicked.connect(self.add_videos)
+        btn_refresh = QPushButton("刷新列表")
+        btn_refresh.clicked.connect(self.load_list)
+        row.addWidget(self.ed_custom, 1)
+        row.addWidget(self.btn_add)
+        row.addWidget(btn_refresh)
+        col.addLayout(row)
+
+        # ---- 操作区 ----
+        grid2 = QGridLayout()
+        self.btn_apply = QPushButton("应用并重启")
+        self.btn_apply.clicked.connect(self.apply_selected)
+        self.btn_pause = QPushButton("暂停 / 恢复")
+        self.btn_pause.clicked.connect(self.toggle_pause)
+        self.btn_fix = QPushButton("修复叠放（图标被视频盖时）")
+        self.btn_fix.clicked.connect(self.fix_stack)
+        self.btn_stop = QPushButton("停止壁纸")
+        self.btn_stop.clicked.connect(self.stop_wallpaper)
+        self.chk_autostart = QCheckBox("开机自启")
+        self.chk_autostart.toggled.connect(self.toggle_autostart)
+        grid2.addWidget(self.btn_apply, 0, 0)
+        grid2.addWidget(self.btn_pause, 0, 1)
+        grid2.addWidget(self.btn_stop, 0, 2)
+        grid2.addWidget(self.btn_fix, 1, 0, 1, 3)
+        grid2.addWidget(self.chk_autostart, 2, 0, 1, 3)
+        col.addLayout(grid2)
+
+        self.statusBar().showMessage("就绪")
+
+        self.load_list()
+        self.refresh()
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.refresh)
+        self.timer.start(2000)
+
+    # ---------- 列表 ----------
+    def load_list(self):
+        self._building = True
+        self.lst.clear()
+        cur = read_conf()
+        for f in sorted(glob(os.path.join(VIDEO_DIR, "*"))):
+            if f.lower().endswith(EXTS):
+                it = QListWidgetItem(os.path.basename(f))
+                it.setData(Qt.UserRole, f)
+                it.setToolTip(f)
+                self.lst.addItem(it)
+                if os.path.basename(f) == os.path.basename(cur):
+                    it.setSelected(True)
+                    self.lst.setCurrentItem(it)
+        self._building = False
+
+    # ---------- 状态刷新 ----------
+    def refresh(self):
+        act = svc_active()
+        self.lbl_svc.setText("● 运行中" if act else "○ 已停止")
+        self.lbl_svc.setStyleSheet("color:#2ca02c" if act else "color:#888")
+        p = mpv_pause()
+        self.lbl_pause.setText(
+            "暂停中" if p else ("播放中" if p is False else "—"))
+        cur = read_conf()
+        self.lbl_cur.setText(os.path.basename(cur) if cur else "（未配置）")
+        self.lbl_cur.setToolTip(cur)
+        self.chk_autostart.blockSignals(True)
+        self.chk_autostart.setChecked(svc_enabled())
+        self.chk_autostart.blockSignals(False)
+
+    # ---------- 动作 ----------
+    def _bg(self, fn, msg, on_ok=None):
+        self.statusBar().showMessage(msg + "…")
+        for b in (self.btn_apply, self.btn_pause, self.btn_stop, self.btn_fix,
+                  self.btn_add):
+            b.setEnabled(False)
+
+        def _done(result=None):
+            for b in (self.btn_apply, self.btn_pause, self.btn_stop, self.btn_fix,
+                      self.btn_add):
+                b.setEnabled(True)
+            if isinstance(result, str):
+                self.statusBar().showMessage("失败：" + result.splitlines()[0][:70])
+                QMessageBox.warning(self, "操作未成功", result)
+            else:
+                self.statusBar().showMessage(
+                    (on_ok() if on_ok else None) or (msg + " 完成"))
+            self.refresh()
+
+        Worker(fn).start(_done)
+
+    def apply_selected(self):
+        video = self.ed_custom.text().strip()
+        if not video:
+            it = self.lst.currentItem()
+            if not it:
+                QMessageBox.information(self, "提示", "先在列表里选一个视频")
+                return
+            video = it.data(Qt.UserRole)
+        write_conf(video)
+        self._bg(lambda: sync_official(video), f"应用 {os.path.basename(video)}")
+
+    def apply_custom(self):
+        video = self.ed_custom.text().strip()
+        if not video:
+            return
+        write_conf(video)
+        self._bg(lambda: sync_official(video), f"应用 {os.path.basename(video)}")
+
+    def add_videos(self):
+        start = getattr(self, "_browse_dir", None) or (
+            VIDEO_DIR if os.path.isdir(VIDEO_DIR) else HOME)
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "选择视频文件（可多选）", start,
+            "视频 (" + " ".join(f"*{e}" for e in EXTS) + ");;所有文件 (*)")
+        if not files:
+            return
+        self._browse_dir = os.path.dirname(files[0])
+        copied, skipped, renamed = [], [], []
+
+        def _do():
+            for src in files:
+                dst, err = copy_into_lib(src)
+                if err:
+                    return err
+                if dst is None:
+                    skipped.append(os.path.basename(src))
+                else:
+                    copied.append(dst)
+                    if dst != os.path.basename(src):
+                        renamed.append(dst)
+            return None
+
+        def _on_ok():
+            self.load_list()
+            for i in range(self.lst.count()):
+                if os.path.basename(self.lst.item(i).data(Qt.UserRole)) in copied:
+                    self.lst.setCurrentItem(self.lst.item(i))
+                    break
+            parts = [f"已添加 {len(copied)} 个视频"]
+            if renamed:
+                parts.append("同名自动改名：" + "、".join(renamed[:3])
+                             + ("…" if len(renamed) > 3 else ""))
+            if skipped:
+                parts.append(f"跳过已在库中 {len(skipped)} 个")
+            return "；".join(parts)
+
+        self._bg(_do, "添加视频", on_ok=_on_ok)
+
+    def toggle_pause(self):
+        p = mpv_pause()
+        if p is None:
+            QMessageBox.information(self, "提示", "壁纸未在运行或 IPC 不通")
+            return
+        mpv_set("set pause " + ("no" if p else "yes"))
+        QTimer.singleShot(300, self.refresh)
+
+    def fix_stack(self):
+        self._bg(restart_canvas, "重排叠放（仅重启画布）")
+
+    def stop_wallpaper(self):
+        def _do():
+            run(["systemctl", "--user", "stop", SVC])
+            return None
+        self._bg(_do, "停止壁纸")
+
+    def toggle_autostart(self, on):
+        run(["systemctl", "--user", "enable" if on else "disable", SVC])
+        self.statusBar().showMessage(
+            "开机自启已开" if on else "开机自启已关")
+        self.refresh()
+
+
+def main():
+    if not shutil.which(BIN):
+        QMessageBox.critical(None, "错误", f"缺 {BIN}，请先安装 mpvpaper")
+        return 1
+    app = QApplication(sys.argv)
+    win = Win()
+    win.show()
+    return app.exec_()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

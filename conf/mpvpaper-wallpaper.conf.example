@@ -1,0 +1,19 @@
+# mpvpaper 视频壁纸配置
+# 安装脚本会把本文件复制为 ~/.config/mpvpaper-wallpaper.conf，之后手改即可。
+# 改完执行: systemctl --user restart mpvpaper-wallpaper.service
+
+# 视频文件（mpv 可播放的任意格式/URL）。
+# 系统自带动态壁纸素材（装有 deepin-livewallpapers 系列包时可用）：
+#   ls /usr/share/wallpapers/deepin-livewallpapers/
+VIDEO="/usr/share/wallpapers/deepin-livewallpapers/Campfire_Camping_In_The_Forest.mp4"
+
+# 输出名：auto = 自动探测已连接显示器（单屏足够用）；
+# 多屏或探测不准时手动指定（查看方法：mpvpaper -d 或 wayland-info）。
+OUTPUT="auto"
+
+# 传给 mpv 的选项
+MPV_OPTS="no-audio --loop-playlist"
+
+# 接管视频后回写给官方外观服务的静态占位图 URI（保护锁屏不黑屏）。
+# 留空 = 自动选取 /usr/share/wallpapers 下第一张静态图。
+# DEFAULT_STATIC="file:///usr/share/wallpapers/deepin/organic-glass-dark.jpg"

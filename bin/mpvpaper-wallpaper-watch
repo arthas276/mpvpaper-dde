@@ -1,0 +1,173 @@
+#!/bin/bash
+# mpvpaper 官方壁纸接管钩子（watch）
+# 监听会话总线 org.deepin.dde.Appearance1.Changed：
+#   官方壁纸值 = 视频  → 写入 conf 并拉起/热切 mpvpaper 接管播放
+#   官方壁纸值 = 静态图 → 停壁纸栈让出桌面（dde-shell 画布显示静态壁纸）
+# 独立常驻（mpvpaper-wallpaper-watch.service），不依赖壁纸栈存活。
+set -u
+
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/mpvpaper-wallpaper.conf"
+SVC=mpvpaper-wallpaper.service
+MPV_SOCK="$XDG_RUNTIME_DIR/mpvpaper-wallpaper.sock"
+APPEAR=org.deepin.dde.Appearance1
+APPATH=/org/deepin/dde/Appearance1
+STATE="$XDG_RUNTIME_DIR/mpvpaper-watch.state"
+WANT="$XDG_RUNTIME_DIR/mpvpaper-watch.want"   # playing=接管中 / yield=让位中
+# 最近一次静态官方壁纸值（持久）：接管视频后回写它当占位，保锁屏。
+# 锁屏渲染器加载不了 mp4 的 wallpaper 值（黑屏），动态源另在别处。
+STATIC_MEM="$HOME/.local/state/mpvpaper-wallpaper/static-uri"
+# 占位图：优先读 conf 的 DEFAULT_STATIC；否则自动挑一张系统静态壁纸。
+DEFAULT_STATIC=""
+[ -r "$CONF" ] && . "$CONF"
+if [ -z "$DEFAULT_STATIC" ]; then
+  DEFAULT_STATIC="file:///usr/share/wallpapers/deepin/organic-glass-dark.jpg"
+  for _f in /usr/share/wallpapers/*/*.jpg /usr/share/wallpapers/*.jpg; do
+    [ -f "$_f" ] && { DEFAULT_STATIC="file://$_f"; break; }
+  done
+fi
+
+log() { echo "[mpvpaper-watch] $*"; }
+
+official_uri() {
+  busctl --user call "$APPEAR" "$APPATH" "$APPEAR" GetCurrentWorkspaceBackground 2>/dev/null |
+    grep -oP '(?<=")file://[^"]+' | head -1
+}
+
+uri_to_path() {
+  printf '%s' "${1#file://}" | sed 's/%20/ /g; s/%3A/:/g'
+}
+
+is_video() {
+  case "${1,,}" in *.mp4|*.webm|*.mkv|*.mov|*.gif) return 0 ;; *) return 1 ;; esac
+}
+
+cur_video() { bash -c ". '$CONF' 2>/dev/null; echo \"\$VIDEO\""; }
+
+mpv_ipc() { printf '%s\n' "$1" | timeout 2 socat - "$MPV_SOCK" >/dev/null 2>&1 || true; }
+
+set_conf_video() {
+  local tmp
+  tmp=$(mktemp) || return 1
+  {
+    [ -r "$CONF" ] && grep -v '^VIDEO=' "$CONF"
+    printf 'VIDEO="%s"\n' "$1"
+  } > "$tmp" 2>/dev/null && mv "$tmp" "$CONF"
+}
+
+read_static_mem() { [ -r "$STATIC_MEM" ] && cat "$STATIC_MEM"; }
+save_static_mem() {
+  mkdir -p "$(dirname "$STATIC_MEM")" 2>/dev/null
+  printf '%s' "$1" > "$STATIC_MEM"
+}
+set_official_wallpaper() {
+  busctl --user call "$APPEAR" "$APPATH" "$APPEAR" Set ss wallpaper "$1" >/dev/null 2>&1
+}
+
+apply_official() {
+  local uri path cur exempt
+  uri=$(official_uri)
+  [ -n "$uri" ] || return 0
+  exempt=$(read_static_mem)
+  # 豁免前置（先于去重）：占位静态值=接管态，补写 want 后直接返回。
+  # 注：用户真选了同一张占位图会被误豁免（已知 edge case，接受）。
+  if [ -n "$exempt" ] && [ "$uri" = "$exempt" ]; then
+    printf playing > "$WANT"
+    return 0
+  fi
+  [ "$(cat "$STATE" 2>/dev/null)" = "$uri" ] && return 0
+  printf '%s' "$uri" > "$STATE"
+  exempt=$(read_static_mem)
+  path=$(uri_to_path "$uri")
+
+  if is_video "$path" && [ -f "$path" ]; then
+    cur=$(cur_video)
+    set_conf_video "$path"
+    if systemctl --user is-active --quiet "$SVC"; then
+      [ "$cur" = "$path" ] || mpv_ipc "loadfile \"$path\""
+    else
+      systemctl --user reset-failed "$SVC" 2>/dev/null
+      systemctl --user start "$SVC"
+    fi
+    # 回写静态占位：锁屏不能接受 mp4 的 wallpaper 值。回写触发的 Changed
+    # 会命中去重（STATE 已提前写成 exempt）或豁免分支，不打断播放。
+    [ -n "$exempt" ] || { exempt=$DEFAULT_STATIC; save_static_mem "$exempt"; }
+    if [ "$exempt" != "$uri" ]; then
+      set_official_wallpaper "$exempt"
+      printf '%s' "$exempt" > "$STATE"
+    fi
+    printf playing > "$WANT"
+    log "接管视频壁纸: $path（官方值回写静态占位保锁屏）"
+  elif is_video "$path"; then
+    log "官方值是视频但文件不存在: $path"
+  elif [ -n "$exempt" ] && [ "$uri" = "$exempt" ]; then
+    printf playing > "$WANT"
+    return 0   # 我们回写的占位，继续播，不动栈
+  else
+    save_static_mem "$uri"
+    printf yield > "$WANT"
+    if systemctl --user is-active --quiet "$SVC"; then
+      systemctl --user stop "$SVC"
+      log "官方壁纸为静态图，让出桌面"
+    fi
+  fi
+}
+
+monitor_lock() {
+  # 锁屏 → 停壁纸栈（mpv 静帧 surface 会盖住锁屏自身的动态背景）；
+  # 解锁 → 仅在接管态（want=playing）拉回，不破坏让位。
+  while :; do
+    dbus-monitor --session "type='signal',interface=com.deepin.SessionManager,member=LockedChanged" 2>/dev/null |
+    while read -r line; do
+      case "$line" in
+        *member=LockedChanged*) pending=1 ;;
+        *boolean*)
+          [ "${pending:-0}" = 1 ] || continue
+          pending=0
+          case "$line" in
+            *true*)
+              systemctl --user stop "$SVC" 2>/dev/null
+              log "锁屏 → 停壁纸栈（让位锁屏动态背景）" ;;
+            *false*)
+              [ "$(cat "$WANT" 2>/dev/null)" = playing ] || continue
+              systemctl --user reset-failed "$SVC" 2>/dev/null
+              systemctl --user start "$SVC" 2>/dev/null
+              log "解锁（dde）→ 拉回壁纸栈" ;;
+          esac ;;
+      esac
+    done
+    sleep 5
+  done
+}
+
+monitor_login1() {
+  # logind 兜底：输密码真实解锁未必走 dde 信号链，login1 的 Lock/Unlock 必发。
+  while :; do
+    dbus-monitor --system "type='signal',interface='org.freedesktop.login1.Session'" 2>/dev/null |
+    while read -r line; do
+      case "$line" in
+        *member=Unlock*)
+          [ "$(cat "$WANT" 2>/dev/null)" = playing ] || continue
+          systemctl --user reset-failed "$SVC" 2>/dev/null
+          systemctl --user start "$SVC" 2>/dev/null
+          log "解锁（login1）→ 拉回壁纸栈" ;;
+        *member=Lock*)
+          systemctl --user stop "$SVC" 2>/dev/null
+          log "锁屏（login1）→ 停壁纸栈" ;;
+      esac
+    done
+    sleep 5
+  done
+}
+
+monitor_lock &
+monitor_login1 &
+
+apply_official   # 启动时对齐一次当前官方值
+while :; do
+  dbus-monitor --session "type='signal',interface=$APPEAR,member=Changed" 2>/dev/null |
+  while read -r line; do
+    case "$line" in *member=Changed*) apply_official ;; esac
+  done
+  sleep 5
+done

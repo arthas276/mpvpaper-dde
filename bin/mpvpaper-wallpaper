@@ -1,0 +1,104 @@
+#!/bin/bash
+# mpvpaper 视频壁纸启动器（含锁屏/挂起自动暂停 glue）
+# 由 systemd user 单元 mpvpaper-wallpaper.service 调起，也可手动运行。
+set -u
+
+# ---------- 可配置项（被 ~/.config/mpvpaper-wallpaper.conf 覆盖） ----------
+VIDEO=""
+OUTPUT="auto"
+MPV_OPTS="no-audio --loop-playlist"
+
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/mpvpaper-wallpaper.conf"
+[ -r "$CONF" ] && . "$CONF"
+
+log() { echo "[mpvpaper-wallpaper] $*"; }
+
+# 输出自动探测：第一个已连接 DRM 连接器（treeland 直接用 DRM 连接器名做输出名）
+detect_output() {
+  local s
+  for s in /sys/class/drm/card*-*/status; do
+    [ -r "$s" ] || continue
+    [ "$(cat "$s" 2>/dev/null)" = connected ] || continue
+    basename "${s%/status}" | sed 's/^card-//'
+    return 0
+  done
+  return 1
+}
+case "$OUTPUT" in
+  auto|"") OUTPUT=$(detect_output) || {
+      log "探测输出名失败，请在 $CONF 手动指定 OUTPUT"
+      exit 1
+    } ;;
+esac
+
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-treeland.socket}"
+MPV_SOCK="$XDG_RUNTIME_DIR/mpvpaper-wallpaper.sock"
+BIN="$HOME/.local/bin/mpvpaper"
+
+mpv_ipc() { printf '%s\n' "$1" | timeout 2 socat - "$MPV_SOCK" >/dev/null 2>&1 || true; }
+
+# ---------- glue：锁屏/解锁、挂起/唤醒 → 暂停/恢复 ----------
+monitor_lock() {
+  while :; do
+    dbus-monitor --session "type='signal',interface=com.deepin.SessionManager,member=LockedChanged" 2>/dev/null |
+    while read -r line; do
+      case "$line" in
+        *member=LockedChanged*) pending=1 ;;
+        *boolean*)
+          [ "${pending:-0}" = 1 ] || continue
+          pending=0
+          case "$line" in
+            *true*)  mpv_ipc 'set pause yes'; log "锁屏 → 暂停" ;;
+            *false*) mpv_ipc 'set pause no';  log "解锁 → 恢复" ;;
+          esac ;;
+      esac
+    done
+    sleep 5
+  done
+}
+monitor_sleep() {
+  while :; do
+    dbus-monitor --system "type='signal',interface=org.freedesktop.login1.Manager,member=PrepareForSleep" 2>/dev/null |
+    while read -r line; do
+      case "$line" in
+        *member=PrepareForSleep*) pending=1 ;;
+        *boolean*)
+          [ "${pending:-0}" = 1 ] || continue
+          pending=0
+          case "$line" in
+            *true*)  mpv_ipc 'set pause yes'; log "挂起 → 暂停" ;;
+            *false*) mpv_ipc 'set pause no';  log "唤醒 → 恢复" ;;
+          esac ;;
+      esac
+    done
+    sleep 5
+  done
+}
+# ---------- 等合成器就绪（登录早期竞态兜底） ----------
+for _ in $(seq 1 60); do
+  [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ] && break
+  sleep 0.5
+done
+[ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ] || { log "等待 $WAYLAND_DISPLAY 超时，退出"; exit 1; }
+[ -x "$BIN" ] || { log "缺 $BIN"; exit 1; }
+[ -n "$VIDEO" ] || { log "未配置 VIDEO，请编辑 $CONF"; exit 1; }
+case "$VIDEO" in
+  http://*|https://*|ftp://*) : ;;   # URL 不做本地存在性检查
+  *) [ -f "$VIDEO" ] || { log "缺视频 $VIDEO"; exit 1; } ;;
+esac
+
+trap 'kill $(jobs -p) 2>/dev/null; pkill -x mpvpaper 2>/dev/null' EXIT
+monitor_lock & monitor_lock_pid=$!
+monitor_sleep & monitor_sleep_pid=$!
+log "启动: $OUTPUT ← $VIDEO"
+
+# ---------- 主循环：崩溃自动重启 ----------
+while :; do
+  . "$CONF" 2>/dev/null   # 重读 conf（watch 钩子热切后崩溃重启不回旧视频）
+  "$BIN" -p -a full -o "$MPV_OPTS input-ipc-server=$MPV_SOCK" "$OUTPUT" "$VIDEO"
+  rc=$?
+  [ "$rc" -eq 0 ] && break   # 干净退出（收到 SIGTERM 等）则结束
+  log "mpvpaper 退出码 $rc，2s 后重启"
+  sleep 2
+done

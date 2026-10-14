@@ -1,0 +1,13 @@
+[Unit]
+Description=mpvpaper 官方壁纸选中值接管钩子
+# 官方外观服务的壁纸值变为视频时拉起/热切 mpvpaper；变为静态图时停栈让出桌面。
+After=dde-session-core.target
+PartOf=dde-session-core.target
+
+[Service]
+ExecStart=%h/.local/bin/mpvpaper-wallpaper-watch
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=dde-session-core.target
