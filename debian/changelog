@@ -1,3 +1,20 @@
+mpvpaper-dde (0.1.0-2) unstable; urgency=medium
+
+  * wrapper: run mpvpaper in background + wait, real TERM/INT trap with
+    staged exit (IPC quit -> TERM -> 3s grace -> KILL). Fixes lock-screen
+    stop hitting the systemd deadline and being recorded as
+    Result=timeout (stop now ~1s, Result=success).
+  * wrapper: new ensure_lock_sync loop re-aligns mpv pause state with
+    login1 LockedHint every 5s. Fixes "stuck paused" when the launcher
+    starts while already unlocked (no transition event ever fires).
+  * watch: new reconcile loop converges service state from LockedHint +
+    want every 20s. Heals missed unlock signals (both dde and login1
+    listeners were observed losing the real unlock event).
+  * watch: log the skip reason when an unlock is ignored due to
+    want != playing.
+
+ -- arthas <arthas@arthas-PC>  Wed, 14 Oct 2026 14:55:02 +0800
+
 mpvpaper-dde (0.1.0-1) unstable; urgency=medium
 
   * Initial packaging: mpvpaper engine (upstream fc5ed28, unmodified,

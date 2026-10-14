@@ -129,7 +129,7 @@ monitor_lock() {
               systemctl --user stop "$SVC" 2>/dev/null
               log "锁屏 → 停壁纸栈（让位锁屏动态背景）" ;;
             *false*)
-              [ "$(cat "$WANT" 2>/dev/null)" = playing ] || continue
+              [ "$(cat "$WANT" 2>/dev/null)" = playing ] || { log "解锁（dde）但 want 非 playing，不拉回"; continue; }
               systemctl --user reset-failed "$SVC" 2>/dev/null
               systemctl --user start "$SVC" 2>/dev/null
               log "解锁（dde）→ 拉回壁纸栈" ;;
@@ -147,7 +147,7 @@ monitor_login1() {
     while read -r line; do
       case "$line" in
         *member=Unlock*)
-          [ "$(cat "$WANT" 2>/dev/null)" = playing ] || continue
+          [ "$(cat "$WANT" 2>/dev/null)" = playing ] || { log "解锁（login1）但 want 非 playing，不拉回"; continue; }
           systemctl --user reset-failed "$SVC" 2>/dev/null
           systemctl --user start "$SVC" 2>/dev/null
           log "解锁（login1）→ 拉回壁纸栈" ;;
@@ -160,8 +160,35 @@ monitor_login1() {
   done
 }
 
+reconcile() {
+  # 对账兑底：两路锁屏监听都实测丢过解锁信号（2026-10-14），
+  # 每 20s 按锁态+want 收敛：want=playing 且未锁 → 栈应活跃；已锁 → 应停。
+  local sid hint
+  while :; do
+    sid="${XDG_SESSION_ID:-$(loginctl list-sessions --no-legend 2>/dev/null | awk -v u="$(id -un)" '$3==u{print $1; exit}')}"
+    hint=$(loginctl show-session "$sid" -p LockedHint --value 2>/dev/null)
+    if [ "$(cat "$WANT" 2>/dev/null)" = playing ]; then
+      case "$hint" in
+        yes)
+          systemctl --user is-active --quiet "$SVC" && {
+            systemctl --user stop "$SVC" 2>/dev/null
+            log "对账: 锁屏态停栈"
+          } ;;
+        no)
+          systemctl --user is-active --quiet "$SVC" || {
+            systemctl --user reset-failed "$SVC" 2>/dev/null
+            systemctl --user start "$SVC" 2>/dev/null
+            log "对账: 解锁态拉回壁纸栈"
+          } ;;
+      esac
+    fi
+    sleep 20
+  done
+}
+
 monitor_lock &
 monitor_login1 &
+reconcile &
 
 apply_official   # 启动时对齐一次当前官方值
 while :; do

@@ -44,6 +44,43 @@ BIN="$HOME/.local/bin/mpvpaper"
 
 mpv_ipc() { printf '%s\n' "$1" | timeout 2 socat - "$MPV_SOCK" >/dev/null 2>&1 || true; }
 
+lock_hint() {
+  # 当前会话锁态（login1 权威值）：yes / no / 空（取不到）
+  local sid
+  sid="${XDG_SESSION_ID:-$(loginctl list-sessions --no-legend 2>/dev/null | awk -v u="$(id -un)" '$3==u{print $1; exit}')}"
+  [ -n "$sid" ] && loginctl show-session "$sid" -p LockedHint --value 2>/dev/null
+}
+
+ensure_lock_sync() {
+  # 对账兑底：-p 起播靠解锁事件解除暂停，事件丢失（如手动拉起时本就
+  # 处于解锁态，无任何过渡事件）会永远卡暂停。每 5s 对齐一次锁态。
+  while :; do
+    if [ -S "$MPV_SOCK" ]; then
+      case "$(lock_hint)" in
+        yes) mpv_ipc 'set pause yes' ;;
+        no)  mpv_ipc 'set pause no' ;;
+      esac
+      sleep 5
+    else
+      sleep 1   # mpv 重启间隙等套接字
+    fi
+  done
+}
+
+term_cleanup() {
+  # 分级退出：IPC quit → TERM → 3s 宽限 → KILL。mpvpaper 撕 layer-shell
+  # 可能慢于 systemd 停止时限，自己动手保证确定性退场。
+  trap - TERM INT EXIT
+  if [ -n "${mpvpid:-}" ]; then
+    mpv_ipc 'quit'
+    kill -TERM "$mpvpid" 2>/dev/null
+    for _ in 1 2 3; do kill -0 "$mpvpid" 2>/dev/null || break; sleep 1; done
+    kill -KILL "$mpvpid" 2>/dev/null
+  fi
+  kill $(jobs -p) 2>/dev/null
+  exit 0
+}
+
 # ---------- glue：锁屏/解锁、挂起/唤醒 → 暂停/恢复 ----------
 monitor_lock() {
   while :; do
@@ -94,16 +131,19 @@ case "$VIDEO" in
   *) [ -f "$VIDEO" ] || { log "缺视频 $VIDEO"; exit 1; } ;;
 esac
 
-trap 'kill $(jobs -p) 2>/dev/null; pkill -x mpvpaper 2>/dev/null' EXIT
+trap term_cleanup TERM INT EXIT
 monitor_lock & monitor_lock_pid=$!
 monitor_sleep & monitor_sleep_pid=$!
+ensure_lock_sync & sync_pid=$!
 log "启动: $OUTPUT ← $VIDEO"
 
 # ---------- 主循环：崩溃自动重启 ----------
 while :; do
   load_conf 2>/dev/null   # 重读 conf（watch 钩子热切后崩溃重启不回旧视频）
-  "$BIN" -p -a full -o "$MPV_OPTS input-ipc-server=$MPV_SOCK" "$OUTPUT" "$VIDEO"
-  rc=$?
+  # 后台 + wait：TERM 到达时 bash 才能立刻跑 trap（前台阻塞会错过清理窗口）
+  "$BIN" -p -a full -o "$MPV_OPTS input-ipc-server=$MPV_SOCK" "$OUTPUT" "$VIDEO" &
+  mpvpid=$!
+  wait "$mpvpid"; rc=$?
   [ "$rc" -eq 0 ] && break   # 干净退出（收到 SIGTERM 等）则结束
   log "mpvpaper 退出码 $rc，2s 后重启"
   sleep 2
