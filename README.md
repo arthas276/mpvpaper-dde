@@ -33,7 +33,8 @@ bin/      我们写的集成薄壳：
                                     挂起/锁屏暂停、崩溃自重启循环）
           mpvpaper-wallpaper-watch  官方壁纸值接管钩子（监听 Appearance1.Changed：
                                     视频→拉起/热切；静态图→停栈让位；
-                                    锁屏治理；静态占位回写+豁免防抖）
+                                    锁屏治理；静态占位回写+豁免防抖；
+                                    拉回后自动抬画布保图标）
           mpvpaper-wallpaper-ui     PyQt5 控制面板（换视频/加视频/暂停/修复叠放）
 systemd/   两个 user 单元（壁纸栈 Before= dde-shell 画布，保证叠放次序）
 conf/      配置模板（VIDEO / OUTPUT / MPV_OPTS / DEFAULT_STATIC）
@@ -85,7 +86,8 @@ sudo apt install ../mpvpaper-dde_*.deb   # 或 dpkg -i
 ## 使用
 
 - **控制面板**：应用菜单搜「视频壁纸控制」——换视频、把新视频加进库、暂停/恢复、
-  修复叠放（重启 dde-shell 桌面画布，图标跑到视频下面时用）。
+  修复叠放（重启 dde-shell 桌面画布；图标跑到视频下面时用，正常情况下
+  watch 已在每次拉回后自动抬画布，此按钮为手动兜底）。
 - **配置**：`~/.config/mpvpaper-wallpaper.conf`（`OUTPUT=auto` 自动探测单屏输出名，
   多屏手动指定；改完 `systemctl --user restart mpvpaper-wallpaper`）。
 - **从外观服务设置**：把一个视频文件设为官方壁纸（比如文件管理器里"设为壁纸"），

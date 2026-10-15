@@ -12,8 +12,11 @@ journalctl --user -u mpvpaper-wallpaper -u mpvpaper-wallpaper-watch -b --no-page
 在上）。如果壁纸在 dde-shell 桌面画布**之后**映射，就会盖住画布（图标层）。
 
 **处置**：单元里 `Before=dde-shell-plugin@org.deepin.ds.desktop.service` 保证启动
-次序。运行中被 dde-shell 崩溃重启打乱时，用控制面板的「修复叠放」按钮
-（只重启桌面画布插件，不动其他 shell 组件）。
+次序。运行中任何导致壁纸重映射晚于画布的场景（解锁拉回、官方接管、对账
+复活、dde-shell 崩溃重启），watch 会在拉起壁纸栈后自动「抬画布」：等 mpv
+IPC socket 出现 +0.4s 再重启画布单元（画布重映射必在壁纸之上），
+inactive→active 转换判断去重三路并发解锁信号，另有 20s 防抖。手动兜底仍是
+控制面板的「修复叠放」按钮（只重启桌面画布插件，不动其他 shell 组件）。
 
 ## 锁屏黑屏
 

@@ -9,6 +9,7 @@ set -u
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/mpvpaper-wallpaper.conf"
 SVC=mpvpaper-wallpaper.service
+CANVAS=dde-shell-plugin@org.deepin.ds.desktop.service
 MPV_SOCK="$XDG_RUNTIME_DIR/mpvpaper-wallpaper.sock"
 APPEAR=org.deepin.dde.Appearance1
 APPATH=/org/deepin/dde/Appearance1
@@ -54,6 +55,41 @@ cur_video() { bash -c ". '$CONF' 2>/dev/null; echo \"\$VIDEO\""; }
 
 mpv_ipc() { printf '%s\n' "$1" | timeout 2 socat - "$MPV_SOCK" >/dev/null 2>&1 || true; }
 
+start_stack() {
+  # 拉起壁纸栈；仅真实完成 inactive→active 转换时才抬画布。
+  # Treeland layer-shell 同层按映射先后叠放：mpvpaper 重映射晚于画布
+  # → 视频盖住桌面图标。已活跃时 start 为 no-op、不抬（loadfile 热切
+  # 不重映射、无需抬）。三路解锁信号并发时，首路完成转换后其余路
+  # was_active=1，天然去重。
+  local was_active=0
+  systemctl --user is-active --quiet "$SVC" && was_active=1
+  [ "$was_active" = 0 ] && rm -f "$MPV_SOCK" 2>/dev/null   # 清残留 socket，让抬画布的等待真实反映本次引擎启动
+  systemctl --user reset-failed "$SVC" 2>/dev/null
+  systemctl --user start "$SVC" 2>/dev/null || return 1
+  [ "$was_active" = 0 ] && bump_canvas
+  return 0
+}
+
+bump_canvas() {
+  # 抬画布=重启 dde-shell 桌面画布单元：画布重映射必在刚映射的
+  # mpvpaper 之上，图标回到视频上方（2026-10-15 实测配方）。
+  # 等 mpv IPC socket 出现+0.4s 再动（引擎真起来了）；引擎没起来
+  # 不抬（没有东西盖图标）。20s 防抖挡并发重复抬。
+  local guard="$XDG_RUNTIME_DIR/mpvpaper-canvas-bump.time" now last i=0
+  now=$(date +%s); last=$(cat "$guard" 2>/dev/null) || last=0
+  [ $((now - last)) -ge 20 ] || return 0
+  printf '%s' "$now" > "$guard"
+  while [ $i -lt 75 ] && [ ! -S "$MPV_SOCK" ]; do sleep 0.2; i=$((i+1)); done
+  [ -S "$MPV_SOCK" ] || { log "不抬画布：mpv socket 未出现（引擎未起来）"; return 0; }
+  sleep 0.4
+  systemctl --user reset-failed "$CANVAS" 2>/dev/null
+  if systemctl --user restart "$CANVAS" 2>/dev/null; then
+    log "拉回完成 → 抬画布（图标回视频上方）"
+  else
+    log "画布重启失败（不影响壁纸播放）"
+  fi
+}
+
 set_conf_video() {
   local tmp
   tmp=$(mktemp) || return 1
@@ -94,8 +130,7 @@ apply_official() {
     if systemctl --user is-active --quiet "$SVC"; then
       [ "$cur" = "$path" ] || mpv_ipc "loadfile \"$path\""
     else
-      systemctl --user reset-failed "$SVC" 2>/dev/null
-      systemctl --user start "$SVC"
+      start_stack
     fi
     # 回写静态占位：锁屏不能接受 mp4 的 wallpaper 值。回写触发的 Changed
     # 会命中去重（STATE 已提前写成 exempt）或豁免分支，不打断播放。
@@ -138,8 +173,7 @@ monitor_lock() {
               log "锁屏 → 停壁纸栈（让位锁屏动态背景）" ;;
             *false*)
               [ "$(cat "$WANT" 2>/dev/null)" = playing ] || { log "解锁（dde）但 want 非 playing，不拉回"; continue; }
-              systemctl --user reset-failed "$SVC" 2>/dev/null
-              systemctl --user start "$SVC" 2>/dev/null
+              start_stack
               log "解锁（dde）→ 拉回壁纸栈" ;;
           esac ;;
       esac
@@ -156,8 +190,7 @@ monitor_login1() {
       case "$line" in
         *member=Unlock*)
           [ "$(cat "$WANT" 2>/dev/null)" = playing ] || { log "解锁（login1）但 want 非 playing，不拉回"; continue; }
-          systemctl --user reset-failed "$SVC" 2>/dev/null
-          systemctl --user start "$SVC" 2>/dev/null
+          start_stack
           log "解锁（login1）→ 拉回壁纸栈" ;;
         *member=Lock*)
           systemctl --user stop "$SVC" 2>/dev/null
@@ -186,8 +219,7 @@ monitor_locked_prop() {
               log "锁屏（属性 .Locked→true）→ 停壁纸栈" ;;
             *false*)
               [ "$(cat "$WANT" 2>/dev/null)" = playing ] || { log "解锁（属性翻转）但 want 非 playing，不拉回"; continue; }
-              systemctl --user reset-failed "$SVC" 2>/dev/null
-              systemctl --user start "$SVC" 2>/dev/null
+              start_stack
               log "解锁（属性 .Locked→false）→ 拉回壁纸栈" ;;
           esac ;;
       esac
@@ -209,8 +241,7 @@ reconcile() {
         }
       else
         systemctl --user is-active --quiet "$SVC" || {
-          systemctl --user reset-failed "$SVC" 2>/dev/null
-          systemctl --user start "$SVC" 2>/dev/null
+          start_stack
           log "对账: 解锁态拉回壁纸栈"
         }
       fi
