@@ -12,22 +12,30 @@ SVC=mpvpaper-wallpaper.service
 MPV_SOCK="$XDG_RUNTIME_DIR/mpvpaper-wallpaper.sock"
 APPEAR=org.deepin.dde.Appearance1
 APPATH=/org/deepin/dde/Appearance1
+SMNAME=com.deepin.SessionManager
+SMPATH=/com/deepin/SessionManager
 STATE="$XDG_RUNTIME_DIR/mpvpaper-watch.state"
 WANT="$XDG_RUNTIME_DIR/mpvpaper-watch.want"   # playing=接管中 / yield=让位中
 # 最近一次静态官方壁纸值（持久）：接管视频后回写它当占位，保锁屏。
 # 锁屏渲染器加载不了 mp4 的 wallpaper 值（黑屏），动态源另在别处。
 STATIC_MEM="$HOME/.local/state/mpvpaper-wallpaper/static-uri"
-# 占位图：优先读 conf 的 DEFAULT_STATIC；否则自动挑一张系统静态壁纸。
-DEFAULT_STATIC=""
-[ -r "$CONF" ] && . "$CONF"
-if [ -z "$DEFAULT_STATIC" ]; then
-  DEFAULT_STATIC="file:///usr/share/wallpapers/deepin/organic-glass-dark.jpg"
-  for _f in /usr/share/wallpapers/*/*.jpg /usr/share/wallpapers/*.jpg; do
-    [ -f "$_f" ] && { DEFAULT_STATIC="file://$_f"; break; }
-  done
-fi
+DEFAULT_STATIC="file:///usr/share/wallpapers/deepin/organic-glass-dark.jpg"
 
 log() { echo "[mpvpaper-watch] $*"; }
+
+locked_now() {
+  # 锁态权威源：SessionManager.Locked 属性。V25/Treeland 下 login1 LockedHint
+  # 任何锁型都不置位（2026-10-15 实测：手动锁属性=true 而 hint=no，旧对账
+  # 据 hint 误判解锁态、锁屏下复活引擎空转 40% CPU）。属性不可得才退 hint。
+  local v sid
+  v=$(busctl --user get-property "$SMNAME" "$SMPATH" "$SMNAME" Locked 2>/dev/null)
+  case "$v" in
+    *true*)  return 0 ;;
+    *false*) return 1 ;;
+  esac
+  sid="${XDG_SESSION_ID:-$(loginctl list-sessions --no-legend 2>/dev/null | awk -v u="$(id -un)" '$3==u{print $1; exit}')}"
+  [ "$(loginctl show-session "$sid" -p LockedHint --value 2>/dev/null)" = yes ]
+}
 
 official_uri() {
   busctl --user call "$APPEAR" "$APPATH" "$APPEAR" GetCurrentWorkspaceBackground 2>/dev/null |
@@ -160,27 +168,52 @@ monitor_login1() {
   done
 }
 
-reconcile() {
-  # 对账兑底：两路锁屏监听都实测丢过解锁信号（2026-10-14），
-  # 每 20s 按锁态+want 收敛：want=playing 且未锁 → 栈应活跃；已锁 → 应停。
-  local sid hint
+monitor_locked_prop() {
+  # 第三路：PropertiesChanged(.Locked)。treeland idle 自动锁对 dde/login1
+  # 双路零信号（2026-10-14 实测）；dde 手动锁实测属性必翻（2026-10-15）。
+  # idle 锁若也翻属性即被此路捕获（观测站验证中）。
   while :; do
-    sid="${XDG_SESSION_ID:-$(loginctl list-sessions --no-legend 2>/dev/null | awk -v u="$(id -un)" '$3==u{print $1; exit}')}"
-    hint=$(loginctl show-session "$sid" -p LockedHint --value 2>/dev/null)
-    if [ "$(cat "$WANT" 2>/dev/null)" = playing ]; then
-      case "$hint" in
-        yes)
-          systemctl --user is-active --quiet "$SVC" && {
-            systemctl --user stop "$SVC" 2>/dev/null
-            log "对账: 锁屏态停栈"
-          } ;;
-        no)
-          systemctl --user is-active --quiet "$SVC" || {
-            systemctl --user reset-failed "$SVC" 2>/dev/null
-            systemctl --user start "$SVC" 2>/dev/null
-            log "对账: 解锁态拉回壁纸栈"
-          } ;;
+    dbus-monitor --session "type='signal',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged',arg0='com.deepin.SessionManager'" 2>/dev/null |
+    while read -r line; do
+      case "$line" in
+        *"Locked"*) pending=1 ;;
+        *boolean*)
+          [ "${pending:-0}" = 1 ] || continue
+          pending=0
+          case "$line" in
+            *true*)
+              systemctl --user stop "$SVC" 2>/dev/null
+              log "锁屏（属性 .Locked→true）→ 停壁纸栈" ;;
+            *false*)
+              [ "$(cat "$WANT" 2>/dev/null)" = playing ] || { log "解锁（属性翻转）但 want 非 playing，不拉回"; continue; }
+              systemctl --user reset-failed "$SVC" 2>/dev/null
+              systemctl --user start "$SVC" 2>/dev/null
+              log "解锁（属性 .Locked→false）→ 拉回壁纸栈" ;;
+          esac ;;
       esac
+    done
+    sleep 5
+  done
+}
+
+reconcile() {
+  # 对账兜底：锁屏监听实测丢过事件（2026-10-14/15），每 20s 按锁态+want
+  # 收敛：want=playing 且未锁 → 栈应活跃；已锁 → 应停。
+  # 锁态判定走 locked_now()：Locked 属性优先（hint 在 V25 从不置位）。
+  while :; do
+    if [ "$(cat "$WANT" 2>/dev/null)" = playing ]; then
+      if locked_now; then
+        systemctl --user is-active --quiet "$SVC" && {
+          systemctl --user stop "$SVC" 2>/dev/null
+          log "对账: 锁屏态停栈（Locked=true）"
+        }
+      else
+        systemctl --user is-active --quiet "$SVC" || {
+          systemctl --user reset-failed "$SVC" 2>/dev/null
+          systemctl --user start "$SVC" 2>/dev/null
+          log "对账: 解锁态拉回壁纸栈"
+        }
+      fi
     fi
     sleep 20
   done
@@ -188,6 +221,7 @@ reconcile() {
 
 monitor_lock &
 monitor_login1 &
+monitor_locked_prop &
 reconcile &
 
 apply_official   # 启动时对齐一次当前官方值
