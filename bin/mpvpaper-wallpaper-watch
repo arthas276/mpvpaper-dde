@@ -74,11 +74,15 @@ bump_canvas() {
   # 抬画布=重启 dde-shell 桌面画布单元：画布重映射必在刚映射的
   # mpvpaper 之上，图标回到视频上方（2026-10-15 实测配方）。
   # 等 mpv IPC socket 出现+0.4s 再动（引擎真起来了）；引擎没起来
-  # 不抬（没有东西盖图标）。20s 防抖挡并发重复抬。
+  # 不抬（没有东西盖图标）。20s 防抖挡并发重复抬；判定+登记段走
+  # flock 原子化——三路解锁同秒并发时 read-check-write 竞态会让
+  # 两路同时通过（16:53 实战双抬，终态无害但多一次画布重启）。
   local guard="$XDG_RUNTIME_DIR/mpvpaper-canvas-bump.time" now last i=0
-  now=$(date +%s); last=$(cat "$guard" 2>/dev/null) || last=0
-  [ $((now - last)) -ge 20 ] || return 0
-  printf '%s' "$now" > "$guard"
+  ( flock -n 9 || exit 1
+    now=$(date +%s); last=$(cat "$guard" 2>/dev/null) || last=0
+    [ $((now - last)) -ge 20 ] || exit 1
+    printf '%s' "$now" > "$guard"
+  ) 9>"$guard.lock" || return 0
   while [ $i -lt 75 ] && [ ! -S "$MPV_SOCK" ]; do sleep 0.2; i=$((i+1)); done
   [ -S "$MPV_SOCK" ] || { log "不抬画布：mpv socket 未出现（引擎未起来）"; return 0; }
   sleep 0.4
