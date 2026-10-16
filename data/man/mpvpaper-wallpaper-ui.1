@@ -1,0 +1,27 @@
+.TH MPVPAPER-WALLPAPER-UI 1 "2026-10-16" "mpvpaper-dde 0.1.0-4" "User Commands"
+.SH NAME
+mpvpaper-wallpaper-ui \- control panel for the mpvpaper video wallpaper
+.SH SYNOPSIS
+.B mpvpaper-wallpaper-ui
+.SH DESCRIPTION
+A small PyQt5 panel for the mpvpaper dynamic video wallpaper:
+.TP
+.B pick a video
+lists the packaged deepin\-livewallpaper assets (read\-only) and the personal
+library
+.IR ~/.local/share/wallpaper\-videos ,
+applying the choice immediately.
+.TP
+.B add videos
+copies files into the personal library.
+.TP
+.B pause / resume
+controls playback without stopping the service.
+.TP
+.B fix layering
+re\-raises the video layer when it hides desktop icons.
+.TP
+.B autostart toggle
+enables or disables the two user services.
+.SH SEE ALSO
+.BR mpvpaper-wallpaper (1)

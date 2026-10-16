@@ -44,8 +44,10 @@ install -m 644 "$REPO/systemd/mpvpaper-wallpaper.service" \
 CONF="$HOME/.config/mpvpaper-wallpaper.conf"
 [ -f "$CONF" ] || install -m 644 "$REPO/conf/mpvpaper-wallpaper.conf.example" "$CONF"
 sed -e "s|@PYTHON@|$(command -v python3)|g" -e "s|@BINDIR@|$BIN_DIR|g" \
-  "$REPO/data/mpvpaper-wallpaper-ui.desktop.in" \
-  > "$HOME/.local/share/applications/mpvpaper-wallpaper-ui.desktop"
+  "$REPO/data/mpvpaper-dde.desktop.in" \
+  > "$HOME/.local/share/applications/mpvpaper-dde.desktop"
+install -D -m 0644 "$REPO/data/icons/512x512/mpvpaper-dde.png" \
+  "$HOME/.local/share/icons/hicolor/512x512/apps/mpvpaper-dde.png"
 update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
 systemctl --user daemon-reload
 

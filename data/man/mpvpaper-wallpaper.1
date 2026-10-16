@@ -1,0 +1,40 @@
+.TH MPVPAPER-WALLPAPER 1 "2026-10-16" "mpvpaper-dde 0.1.0-4" "User Commands"
+.SH NAME
+mpvpaper-wallpaper \- launcher for the mpvpaper dynamic video wallpaper on deepin V25 / UOS 25 (Treeland)
+.SH SYNOPSIS
+.B mpvpaper-wallpaper
+[\fICONF\fR]
+.SH DESCRIPTION
+Starts
+.BR mpvpaper (1)
+on the desktop background layer of the deepin / UOS 25 Treeland compositor,
+playing the video configured in
+.IR CONF .
+.PP
+The launcher runs mpvpaper in the background, keeps the static placeholder
+wallpaper in sync while the video layer is up, and exits cleanly on
+SIGTERM/SIGINT (IPC quit, then TERM, then KILL after a 3 s grace period),
+pausing and resuming playback on session lock and unlock together with
+.BR mpvpaper-wallpaper-watch (1).
+.SH OPTIONS
+.TP
+.I CONF
+Configuration file to load. Defaults to
+.IR ~/.config/mpvpaper-wallpaper.conf .
+.SH FILES
+.TP
+.I ~/.config/mpvpaper-wallpaper.conf
+User configuration: video source (VIDEO=), mpv options, output autodetection.
+.TP
+.I /usr/share/mpvpaper-dde/mpvpaper-wallpaper.conf
+Packaged default configuration; copy it to the user path to customize.
+.SH SERVICES
+.B systemd --user start mpvpaper-wallpaper.service
+runs this command as a user unit.
+.B mpvpaper-wallpaper-watch.service
+keeps the video state aligned with the session lock state and the official
+wallpaper selection.
+.SH SEE ALSO
+.BR mpvpaper (1),
+.BR mpvpaper-wallpaper-watch (1),
+.BR mpvpaper-wallpaper-ui (1)

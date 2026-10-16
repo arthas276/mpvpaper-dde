@@ -1,3 +1,41 @@
+mpvpaper-dde (0.1.0-5) unstable; urgency=medium
+
+  * watch: STATE is no longer overwritten by the static-placeholder
+    writeback -- a lagging second Changed broadcast used to pierce the
+    dedupe and re-takeover the same video (double takeover in the
+    journal), racing the UI fallback restart and the control-center
+    wallpaper link-up.
+  * watch: subscribe to systemd JobRemoved for the engine unit; any
+    external restart or on-failure self-recovery now re-raises the
+    desktop canvas automatically (the video used to cover the desktop
+    icons until the user fixed the stacking by hand).
+  * ui: fallback restart now stops the watch service first and brings
+    it back last, so the two never race over stop/start sequencing.
+
+ -- arthas276 <22973001+arthas276@users.noreply.github.com>  Fri, 16 Oct 2026 17:50:00 +0800
+
+mpvpaper-dde (0.1.0-4) unstable; urgency=medium
+
+  * changelog: fix bogus mail hosts in historical entries (lintian E).
+  * desktop: run the UI binary directly instead of /usr/bin/python3 in
+    Exec (lintian W: desktop-command-not-in-package).
+  * Add manual pages for the packaged commands (lintian W:
+    no-manual-page).
+
+ -- arthas276 <22973001+arthas276@users.noreply.github.com>  Fri, 16 Oct 2026 16:06:37 +0800
+
+mpvpaper-dde (0.1.0-3) unstable; urgency=medium
+
+  * control: Maintainer -> arthas276 (GitHub no-reply); add Homepage and
+    Vcs-* fields; Chinese Description (store listing reads it).
+  * ui: video picker now lists the system deepin-livewallpapers assets
+    (read-only section) alongside the personal library.
+  * New 512px app icon (Icon=mpvpaper-dde, shipped in hicolor); desktop
+    file renamed to mpvpaper-dde.desktop to match the package name
+    (spark-store DEB-SPEC recommendation).
+
+ -- arthas276 <22973001+arthas276@users.noreply.github.com>  Fri, 16 Oct 2026 15:24:14 +0800
+
 mpvpaper-dde (0.1.0-2) unstable; urgency=medium
 
   * wrapper: run mpvpaper in background + wait, real TERM/INT trap with
@@ -13,7 +51,7 @@ mpvpaper-dde (0.1.0-2) unstable; urgency=medium
   * watch: log the skip reason when an unlock is ignored due to
     want != playing.
 
- -- arthas <arthas@arthas-PC>  Wed, 14 Oct 2026 14:55:02 +0800
+ -- arthas276 <22973001+arthas276@users.noreply.github.com>  Wed, 14 Oct 2026 14:55:02 +0800
 
 mpvpaper-dde (0.1.0-1) unstable; urgency=medium
 
@@ -24,4 +62,4 @@ mpvpaper-dde (0.1.0-1) unstable; urgency=medium
   * Machine-specific bits parameterized: output autodetection, XDG dirs,
     configurable static placeholder.
 
- -- arthas <arthas@localhost>  Wed, 14 Oct 2026 11:39:06 +0800
+ -- arthas276 <22973001+arthas276@users.noreply.github.com>  Wed, 14 Oct 2026 11:39:06 +0800

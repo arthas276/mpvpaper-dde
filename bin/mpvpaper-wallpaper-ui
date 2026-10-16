@@ -32,10 +32,12 @@ CONF = os.path.join(
     "mpvpaper-wallpaper.conf")
 VIDEO_DIR = os.environ.get(
     "MPVPAPER_WALLPAPER_VIDEO_DIR", f"{HOME}/.local/share/wallpaper-videos")
+SYSTEM_VIDEO_DIR = "/usr/share/wallpapers/deepin-livewallpapers"
 RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
 SOCK = f"{RUNTIME_DIR}/mpvpaper-wallpaper.sock"
 SVC = "mpvpaper-wallpaper.service"
 CANVAS = "dde-shell-plugin@org.deepin.ds.desktop.service"
+WATCH = "mpvpaper-wallpaper-watch.service"
 EXTS = (".mp4", ".webm", ".mkv", ".mov", ".avi", ".gif")
 
 
@@ -167,13 +169,17 @@ def restart_canvas():
 
 
 def restart_wallpaper_stack():
-    """换视频后的完整重启：停全部 → 先起壁纸等它映射 → 再起画布（必在其上）。"""
+    """换视频后的完整重启：先停 watch（它会同时拉栈，两边并发打架，
+    2026-10-16 实战：降级重启与 watch 接管互相跘脚导致引擎反复换代）
+    → 停壁纸+画布 → 先起壁纸等它映射 → 再起画布（必在其上）→ 拉回 watch。"""
     reset_failed()
-    run(["systemctl", "--user", "stop", SVC, CANVAS], timeout=25)
+    run(["systemctl", "--user", "stop", WATCH, SVC, CANVAS], timeout=30)
     run(["systemctl", "--user", "start", SVC], timeout=15)
     if not mpv_mapped(15):
+        run(["systemctl", "--user", "start", WATCH], timeout=15)
         return "壁纸进程启动超时，看日志：\njournalctl --user -u mpvpaper-wallpaper -n 30"
     run(["systemctl", "--user", "start", CANVAS], timeout=30)
+    run(["systemctl", "--user", "start", WATCH], timeout=15)
     if run(["systemctl", "--user", "is-active", CANVAS])[1] != "active":
         return ("画布启动失败（叠放未保证），看日志：\njournalctl --user -u "
                 "dde-shell-plugin@org.deepin.ds.desktop -n 30")
@@ -222,7 +228,7 @@ class Win(QMainWindow):
         col.addLayout(grid)
 
         # ---- 视频列表 ----
-        col.addWidget(QLabel(f"视频库（{VIDEO_DIR}）："))
+        col.addWidget(QLabel("可选视频（系统自带 + 个人视频库）："))
         self.lst = QListWidget()
         self.lst.doubleClicked.connect(self.apply_selected)
         col.addWidget(self.lst, 1)
@@ -271,15 +277,31 @@ class Win(QMainWindow):
         self._building = True
         self.lst.clear()
         cur = read_conf()
-        for f in sorted(glob(os.path.join(VIDEO_DIR, "*"))):
-            if f.lower().endswith(EXTS):
-                it = QListWidgetItem(os.path.basename(f))
+        sel = None
+
+        def add_files(files, tag):
+            for f in sorted(files):
+                if not f.lower().endswith(EXTS):
+                    continue
+                it = QListWidgetItem(f"[{tag}] {os.path.basename(f)}")
                 it.setData(Qt.UserRole, f)
                 it.setToolTip(f)
                 self.lst.addItem(it)
                 if os.path.basename(f) == os.path.basename(cur):
-                    it.setSelected(True)
-                    self.lst.setCurrentItem(it)
+                    sel = it
+
+        if os.path.isdir(SYSTEM_VIDEO_DIR):
+            h = QListWidgetItem(f"系统自带（{SYSTEM_VIDEO_DIR}）")
+            h.setFlags(Qt.NoItemFlags)
+            self.lst.addItem(h)
+            add_files(glob(os.path.join(SYSTEM_VIDEO_DIR, "*")), "系统")
+        h2 = QListWidgetItem(f"个人视频库（{VIDEO_DIR}）")
+        h2.setFlags(Qt.NoItemFlags)
+        self.lst.addItem(h2)
+        add_files(glob(os.path.join(VIDEO_DIR, "*")), "库")
+        if sel:
+            sel.setSelected(True)
+            self.lst.setCurrentItem(sel)
         self._building = False
 
     # ---------- 状态刷新 ----------

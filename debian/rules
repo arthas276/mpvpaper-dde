@@ -20,6 +20,11 @@ override_dh_auto_install:
 	sed -i 's|%h/\.local/bin/|/usr/bin/|' $(D)/usr/lib/systemd/user/mpvpaper-wallpaper.service $(D)/usr/lib/systemd/user/mpvpaper-wallpaper-watch.service
 	install -D -m 0644 conf/mpvpaper-wallpaper.conf.example $(D)/usr/share/mpvpaper-dde/mpvpaper-wallpaper.conf
 	mkdir -p $(D)/usr/share/applications
-	sed -e 's|@PYTHON@|/usr/bin/python3|g' -e 's|@BINDIR@|/usr/bin|g' data/mpvpaper-wallpaper-ui.desktop.in > $(D)/usr/share/applications/mpvpaper-wallpaper-ui.desktop
+	install -D -m 0644 data/mpvpaper-dde.desktop.in $(D)/usr/share/applications/mpvpaper-dde.desktop
+	install -D -m 0644 data/man/mpvpaper-wallpaper.1 $(D)/usr/share/man/man1/mpvpaper-wallpaper.1
+	install -D -m 0644 data/man/mpvpaper-wallpaper-watch.1 $(D)/usr/share/man/man1/mpvpaper-wallpaper-watch.1
+	install -D -m 0644 data/man/mpvpaper-wallpaper-ui.1 $(D)/usr/share/man/man1/mpvpaper-wallpaper-ui.1
+	install -D -m 0644 data/man/mpvpaper.1 $(D)/usr/share/man/man1/mpvpaper.1
+	install -D -m 0644 data/icons/512x512/mpvpaper-dde.png $(D)/usr/share/icons/hicolor/512x512/apps/mpvpaper-dde.png
 	install -D -m 0644 README.md $(D)/usr/share/doc/mpvpaper-dde/README.md
 	install -D -m 0644 TROUBLESHOOTING.md $(D)/usr/share/doc/mpvpaper-dde/TROUBLESHOOTING.md

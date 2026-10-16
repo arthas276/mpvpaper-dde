@@ -1,0 +1,43 @@
+.TH MPVPAPER 1 "2026-10-16" "mpvpaper-dde 0.1.0-4" "User Commands"
+.SH NAME
+mpvpaper \- video wallpaper program for Wayland compositors
+.SH SYNOPSIS
+.B mpvpaper
+[\fB\-vf\fR] [\fB\-o\fR \fIOPTIONS\fR] \fIOUTPUT\fR \fIVIDEO\fR
+.SH DESCRIPTION
+Plays a video as a wallpaper on a Wayland compositor layer shell surface.
+Rebuilt unmodified from upstream GhostNaN/mpvpaper (commit fc5ed28) for the
+deepin V25 / UOS 25 (Treeland) desktop; normally started through
+.BR mpvpaper-wallpaper (1)
+instead of by hand.
+.SH OPTIONS
+.TP
+.BR \-v ", " \-\-verbose
+Verbose output.
+.TP
+.BR \-f ", " \-\-fork
+Fork to background.
+.TP
+.BR \-p ", " \-\-pause
+Start paused.
+.TP
+.BI \-o " OPTIONS"
+Options passed to mpv (quote them, e.g.
+.BR "\-o 'no keepaspect'" ).
+.TP
+.BR \-h ", " \-\-help
+Show usage.
+.SH ARGUMENTS
+.TP
+.I OUTPUT
+Wayland output name (use
+.B wayland-info
+to list), or
+.B *
+for all outputs.
+.TP
+.I VIDEO
+Video file or URL to loop.
+.SH SEE ALSO
+.BR mpvpaper-wallpaper (1),
+.BR mpv (1)

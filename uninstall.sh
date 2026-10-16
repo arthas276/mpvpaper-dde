@@ -9,7 +9,7 @@ rm -f "$HOME/.config/systemd/user/"mpvpaper-wallpaper*.service
 systemctl --user daemon-reload
 rm -f "$BIN_DIR/mpvpaper" "$BIN_DIR/mpvpaper-wallpaper" \
       "$BIN_DIR/mpvpaper-wallpaper-watch" "$BIN_DIR/mpvpaper-wallpaper-ui" \
-      "$HOME/.local/share/applications/mpvpaper-wallpaper-ui.desktop"
+      "$HOME/.local/share/applications/mpvpaper-dde.desktop"
 rm -rf "$HOME/.local/state/mpvpaper-wallpaper"
 update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
 

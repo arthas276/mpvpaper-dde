@@ -137,11 +137,13 @@ apply_official() {
       start_stack
     fi
     # 回写静态占位：锁屏不能接受 mp4 的 wallpaper 值。回写触发的 Changed
-    # 会命中去重（STATE 已提前写成 exempt）或豁免分支，不打断播放。
+    # 命中豁免分支（uri=占位）；滞后广播的 Changed（uri=视频）命中去重
+    # （STATE 保持视频 URI）——两条路都不再触发重复接管。2026-10-16 实战
+    # 日志：回写把 STATE 抹成占位后，第二个 Changed 穿透去重造成同视频
+    # 双接管，与 UI 降级/控制中心联动并发重启打架。
     [ -n "$exempt" ] || { exempt=$DEFAULT_STATIC; save_static_mem "$exempt"; }
     if [ "$exempt" != "$uri" ]; then
       set_official_wallpaper "$exempt"
-      printf '%s' "$exempt" > "$STATE"
     fi
     printf playing > "$WANT"
     log "接管视频壁纸: $path（官方值回写静态占位保锁屏）"
@@ -254,9 +256,34 @@ reconcile() {
   done
 }
 
+monitor_engine_jobs() {
+  # 引擎单元任一 systemd job 完成（JobRemoved）→ 若引擎此刻 active
+  # （=start/restart 型 job，含 on-failure 崩溃自拉起、外部手动 start）
+  # 补抬一次画布：自愈/外部重启的引擎重映射晚于画布，视频会排到桌面
+  # 图标之上（2026-10-16 实战：只能手动「修复叠放」）。stop 型 job
+  # 完成时引擎非 active，自动跳过；与 start_stack 自身路径并发时由
+  # bump_canvas 的 20s 防抖去重，不会双抬。
+  dbus-monitor --session \
+    "type='signal',sender='org.freedesktop.systemd1',interface='org.freedesktop.systemd1.Manager',member='JobRemoved'" 2>/dev/null |
+  while read -r line; do
+    case "$line" in
+      *member=JobRemoved*) unit=0 ;;
+      *"string \"done\""*|*"string \"canceled\""*)
+        if [ "$unit" = 1 ]; then
+          unit=0
+          sleep 0.5
+          systemctl --user is-active --quiet "$SVC" && bump_canvas
+        fi
+        ;;
+      *"$SVC"*) unit=1 ;;
+    esac
+  done
+}
+
 monitor_lock &
 monitor_login1 &
 monitor_locked_prop &
+monitor_engine_jobs &
 reconcile &
 
 apply_official   # 启动时对齐一次当前官方值

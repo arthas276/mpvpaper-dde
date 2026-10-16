@@ -1,34 +1,33 @@
 Source: mpvpaper-dde
 Section: x11
 Priority: optional
-Maintainer: arthas <arthas@localhost>
+Maintainer: arthas276 <22973001+arthas276@users.noreply.github.com>
 Build-Depends: debhelper-compat (= 13), gcc, libwayland-bin, wayland-protocols
 Standards-Version: 4.6.2
 Rules-Requires-Root: no
+Homepage: https://github.com/arthas276/mpvpaper-dde
+Vcs-Git: https://github.com/arthas276/mpvpaper-dde.git
+Vcs-Browser: https://github.com/arthas276/mpvpaper-dde
 
 Package: mpvpaper-dde
 Architecture: amd64
 Depends: ${misc:Depends}, ${shlibs:Depends}, socat, python3, python3-pyqt5
 Suggests: deepin-livewallpaper-campfire-camping-in-the-forest
-Description: video wallpaper for the deepin V25 / UOS 25 (Treeland) desktop
- mpvpaper engine (upstream GhostNaN/mpvpaper, vendored unmodified and
- rebuilt here) plus a DDE integration layer: a launcher driven by a user
- config, a watch hook that takes over the official wallpaper value when it
- points to a video (and yields the desktop for static images), and a PyQt5
- control panel.
+Description: mpvpaper 动态视频壁纸（deepin V25 / UOS 25，Treeland 专精）
+ 基于 mpvpaper 引擎（上游 GhostNaN/mpvpaper，原样内嵌重编）加 DDE 集成层：
+ 配置驱动的启动器、接管官方壁纸选中值的 watch 钩子（官方值指向视频时
+ 回写静态占位，保证锁屏不黑屏）、锁屏自动暂停/解锁恢复，附 PyQt5 控制
+ 面板（换视频/添加视频/暂停/修复叠放），并列出 deepin-livewallpapers
+ 系列包自带的动态壁纸素材，点选即播。
  .
- Why: the V25 desktop session has no working official live-wallpaper path
- (control center only previews, never sets), and the lock-screen renderer
- consumes the same wallpaper key (a video value makes it go black). The
- watch hook rewrites a static placeholder into the official value while
- playing, so the lock screen stays safe.
+ 仅适配 deepin V25 / UOS 25（Treeland/Wayland）桌面会话；X11 会话与
+ 其他桌面不可用。锁屏暂停与画布防遮挡（layer 顺序自愈）内建。
  .
- Activate after install:
- systemctl --user daemon-reload &&
+ 安装后启用：
+ systemctl --user daemon-reload
  systemctl --user enable --now mpvpaper-wallpaper.service
  mpvpaper-wallpaper-watch.service
  .
- Video files are NOT shipped; point VIDEO= in
- ~/.config/mpvpaper-wallpaper.conf to your own (system live wallpapers
- live in /usr/share/wallpapers/deepin-livewallpapers/). Without a user
- config the packaged default in /usr/share/mpvpaper-dde/ is used.
+ 包内不携带视频文件；~/.config/mpvpaper-wallpaper.conf 的 VIDEO=
+ 指向你的视频（缺省即系统自带篝火视频，安装 deepin-livewallpaper-*
+ 系列包即可在面板点选更多素材）。
